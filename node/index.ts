@@ -1,5 +1,6 @@
 import { Service, method } from '@vtex/api'
-import type { ClientsConfig } from '@vtex/api'
+import type { ClientsConfig, RecorderState, ServiceContext } from '@vtex/api'
+
 import { Clients } from './clients'
 import { saveClient } from './middlewares/saveClient'
 
@@ -15,11 +16,11 @@ const clients: ClientsConfig<Clients> = {
   },
 }
 
-export default new Service({
+export default new Service<Clients, RecorderState, ServiceContext>({
   clients,
   routes: {
     saveClient: method({
       POST: [saveClient],
     }),
   },
-}) as any
+})
