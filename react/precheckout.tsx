@@ -1,7 +1,7 @@
 /* eslint-disable react/jsx-no-bind */
 
 // react/precheckout.tsx
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 
 const CHECKOUT_URL = '/checkout/#/cart'
 
@@ -17,7 +17,6 @@ function formatBRPhone(value: string) {
   if (len === 0) return ''
   if (len <= 2) return `(${d}`
   if (len <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`
-
   return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7, 11)}`
 }
 
@@ -34,8 +33,130 @@ function isValidBRPhone(value: string) {
 // ===== Helpers email =====
 function isValidEmail(value: string) {
   const e = (value || '').trim()
-
   return e.length >= 5 && e.includes('@') && e.includes('.') && !e.includes(' ')
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    background: '#ffffff',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    padding: '40px 16px',
+  },
+  card: {
+    width: '100%',
+    maxWidth: 520,
+  },
+  headerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
+  step: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    border: '2px solid #6B7280',
+    color: '#111827',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+  },
+  title: {
+    fontSize: 28,
+    lineHeight: '42px',
+    margin: 0,
+    color: '#1f80ca',
+  },
+  subtitle: {
+    margin: '0 0 18px 0px',
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  input: {
+    width: '100%',
+    height: 48,
+    borderRadius: 999,
+    border: '1px solid #D1D5DB',
+    padding: '0 16px',
+    fontSize: 16,
+    outline: 'none',
+  },
+  hint: {
+    marginTop: 8,
+    marginLeft: 6,
+    color: '#6B7280',
+    fontSize: 13,
+  },
+  infoBox: {
+    marginTop: 16,
+    borderRadius: 12,
+    border: '1px solid #E5E7EB',
+    padding: 14,
+    background: '#FAFAFA',
+  },
+  infoTitle: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: 600,
+    marginBottom: 10,
+  },
+  list: {
+    margin: 0,
+    paddingLeft: 0,
+    listStyle: 'none',
+    color: '#4B5563',
+    fontSize: 14,
+  },
+  li: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  check: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    background: '#bcd5e8',
+    color: '#34a2f8',
+    fontWeight: 800,
+    fontSize: 12,
+    flex: '0 0 18px',
+  },
+  error: {
+    marginTop: 12,
+    color: '#B91C1C',
+    background: '#FEF2F2',
+    border: '1px solid #FECACA',
+    padding: 10,
+    borderRadius: 10,
+    fontSize: 14,
+  },
+  button: {
+    marginTop: 18,
+    width: '100%',
+    height: 54,
+    borderRadius: 999,
+    border: 'none',
+    background: '#1f80ca',
+    color: '#ffffff',
+    fontWeight: 800,
+    letterSpacing: 0.6,
+    fontSize: 16,
+  },
+  loading: {
+    marginTop: 18,
+    color: '#6B7280',
+    fontSize: 14,
+    marginLeft: 6,
+  },
 }
 
 export default function PreCheckout() {
@@ -48,12 +169,36 @@ export default function PreCheckout() {
   const [emailTouched, setEmailTouched] = useState(false)
   const [phoneTouched, setPhoneTouched] = useState(false)
 
+  // checagem inicial pra pular precheckout se já tiver email no orderForm
+  const [checkingSession, setCheckingSession] = useState(true)
+
   const phoneDigits = useMemo(() => onlyDigits(phone), [phone])
 
   const emailOk = useMemo(() => isValidEmail(email), [email])
   const phoneOk = useMemo(() => isValidBRPhone(phoneDigits), [phoneDigits])
 
   const isValid = useMemo(() => emailOk && phoneOk, [emailOk, phoneOk])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const ofResp = await fetch('/api/checkout/pub/orderForm', {
+          method: 'GET',
+        })
+        const orderForm = await ofResp.json()
+        const existingEmail = orderForm?.clientProfileData?.email
+
+        if (existingEmail) {
+          window.location.href = CHECKOUT_URL
+          return
+        }
+      } catch {
+        // se falhar, não bloqueia
+      } finally {
+        setCheckingSession(false)
+      }
+    })()
+  }, [])
 
   function handlePhoneChange(value: string) {
     setPhone(formatBRPhone(value))
@@ -76,7 +221,6 @@ export default function PreCheckout() {
       const ofResp = await fetch('/api/checkout/pub/orderForm', {
         method: 'GET',
       })
-
       const orderForm = await ofResp.json()
       const orderFormId = orderForm?.orderFormId
 
@@ -91,10 +235,12 @@ export default function PreCheckout() {
         }),
       })
 
-      if (!saveResp.ok) {
-        const body = await saveResp.json().catch(() => ({}))
+      const saveBody = await saveResp.json().catch(() => ({}))
 
-        throw new Error(body?.error || 'Falha ao salvar seus dados')
+      if (!saveResp.ok || saveBody?.ok === false) {
+        throw new Error(
+          saveBody?.error || saveBody?.message || 'Falha ao salvar seus dados'
+        )
       }
 
       // 3) seta no checkout (clientProfileData)
@@ -113,7 +259,6 @@ export default function PreCheckout() {
 
         if (!attachResp.ok) {
           const attachBody = await attachResp.json().catch(() => ({}))
-
           throw new Error(
             attachBody?.message ||
               attachBody?.error ||
@@ -125,135 +270,31 @@ export default function PreCheckout() {
       window.location.href = CHECKOUT_URL
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro inesperado'
-
       setError(message)
     } finally {
       setLoading(false)
     }
   }
 
-  const styles: Record<string, React.CSSProperties> = {
-    page: {
-      background: '#ffffff',
-      display: 'flex',
-      alignItems: 'flex-start',
-      justifyContent: 'center',
-      padding: '40px 16px',
-    },
-    card: {
-      width: '100%',
-      maxWidth: 520,
-    },
-    headerRow: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      marginBottom: 8,
-    },
-    step: {
-      width: 32,
-      height: 32,
-      borderRadius: 999,
-      border: '2px solid #6B7280',
-      color: '#111827',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontWeight: 700,
-    },
-    title: {
-      fontSize: 28,
-      lineHeight: '42px',
-      margin: 0,
-      color: '#1f80ca',
-    },
-    subtitle: {
-      margin: '0 0 18px 0px',
-      color: '#6B7280',
-      fontSize: 14,
-    },
-    input: {
-      width: '100%',
-      height: 48,
-      borderRadius: 999,
-      border: '1px solid #D1D5DB',
-      padding: '0 16px',
-      fontSize: 16,
-      outline: 'none',
-    },
-    hint: {
-      marginTop: 8,
-      marginLeft: 6,
-      color: '#6B7280',
-      fontSize: 13,
-    },
-    infoBox: {
-      marginTop: 16,
-      borderRadius: 12,
-      border: '1px solid #E5E7EB',
-      padding: 14,
-      background: '#FAFAFA',
-    },
-    infoTitle: {
-      fontSize: 14,
-      color: '#374151',
-      fontWeight: 600,
-      marginBottom: 10,
-    },
-    list: {
-      margin: 0,
-      paddingLeft: 0,
-      listStyle: 'none',
-      color: '#4B5563',
-      fontSize: 14,
-    },
-    li: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 6,
-    },
-    check: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 18,
-      height: 18,
-      borderRadius: 999,
-      background: '#bcd5e8',
-      color: '#34a2f8',
-      fontWeight: 800,
-      fontSize: 12,
-      flex: '0 0 18px',
-    },
-    error: {
-      marginTop: 12,
-      color: '#B91C1C',
-      background: '#FEF2F2',
-      border: '1px solid #FECACA',
-      padding: 10,
-      borderRadius: 10,
-      fontSize: 14,
-    },
-    button: {
-      marginTop: 18,
-      width: '100%',
-      height: 54,
-      borderRadius: 999,
-      border: 'none',
-      background: '#1f80ca',
-      color: '#ffffff',
-      fontWeight: 800,
-      letterSpacing: 0.6,
-      fontSize: 16,
-    },
+  if (checkingSession) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <div style={styles.headerRow}>
+            <h1 style={styles.title}>Para continuar, informe seu dados</h1>
+          </div>
+
+          <p style={styles.subtitle}>Rápido. Fácil. Seguro.</p>
+          <div style={styles.loading}>Verificando seu carrinho…</div>
+        </div>
+      </div>
+    )
   }
 
   return (
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.headerRow}>
-          {/* <div style={styles.step}>1</div> */}
           <h1 style={styles.title}>Para continuar, informe seu dados</h1>
         </div>
 
