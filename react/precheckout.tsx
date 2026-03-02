@@ -352,7 +352,7 @@ export default function PreCheckout() {
                 compras
               </li>
               <li style={styles.li}>
-                <span style={styles.check}>✓</span> Acelerar o preenchimento de
+                <span style={styles.check}>✓</span> Acelerar o preenchimento das
                 suas informações
               </li>
             </ul>
