@@ -1,6 +1,5 @@
+/* react/precheckout.tsx */
 /* eslint-disable react/jsx-no-bind */
-
-// react/precheckout.tsx
 import React, { useEffect, useMemo, useState } from 'react'
 
 const CHECKOUT_URL = '/checkout/#/cart'
@@ -36,6 +35,57 @@ function isValidEmail(value: string) {
   return e.length >= 5 && e.includes('@') && e.includes('.') && !e.includes(' ')
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchJsonWithRetry(
+  input: RequestInfo,
+  init?: RequestInit,
+  retries = 2,
+  delayMs = 500
+) {
+  let lastError: Error | null = null
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const resp = await fetch(input, init)
+
+      let body: any = null
+      const contentType = resp.headers.get('content-type') || ''
+
+      if (contentType.includes('application/json')) {
+        body = await resp.json().catch(() => null)
+      } else {
+        const text = await resp.text().catch(() => '')
+        body = text ? { message: text } : null
+      }
+
+      if (!resp.ok) {
+        const message =
+          body?.error ||
+          body?.message ||
+          `Erro na requisição (${resp.status})`
+
+        throw new Error(message)
+      }
+
+      return body
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error('Erro inesperado')
+
+      if (attempt < retries) {
+        await sleep(delayMs * (attempt + 1))
+        continue
+      }
+
+      throw lastError
+    }
+  }
+
+  throw lastError || new Error('Erro inesperado')
+}
+
 const styles: Record<string, React.CSSProperties> = {
   page: {
     background: '#ffffff',
@@ -66,13 +116,13 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
   },
   title: {
-    fontSize: 28,
-    lineHeight: '42px',
+    fontSize: 34,
+    lineHeight: '38px',
     margin: 0,
-    color: '#1f80ca',
+    color: '#111827',
   },
   subtitle: {
-    margin: '0 0 18px 0px',
+    margin: '0 0 18px 44px',
     color: '#6B7280',
     fontSize: 14,
   },
@@ -124,8 +174,8 @@ const styles: Record<string, React.CSSProperties> = {
     width: 18,
     height: 18,
     borderRadius: 999,
-    background: '#bcd5e8',
-    color: '#34a2f8',
+    background: '#ff77005d',
+    color: '#A30D87',
     fontWeight: 800,
     fontSize: 12,
     flex: '0 0 18px',
@@ -145,7 +195,7 @@ const styles: Record<string, React.CSSProperties> = {
     height: 54,
     borderRadius: 999,
     border: 'none',
-    background: '#1f80ca',
+    background: 'linear-gradient(to bottom, #A30D87, #8435DE)',
     color: '#ffffff',
     fontWeight: 800,
     letterSpacing: 0.6,
@@ -161,15 +211,12 @@ const styles: Record<string, React.CSSProperties> = {
 
 export default function PreCheckout() {
   const [email, setEmail] = useState('')
-  const [phone, setPhone] = useState('') // mascarado
+  const [phone, setPhone] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // controla quando mostrar as mensagens (apenas após blur)
   const [emailTouched, setEmailTouched] = useState(false)
   const [phoneTouched, setPhoneTouched] = useState(false)
-
-  // checagem inicial pra pular precheckout se já tiver email no orderForm
   const [checkingSession, setCheckingSession] = useState(true)
 
   const phoneDigits = useMemo(() => onlyDigits(phone), [phone])
@@ -180,24 +227,33 @@ export default function PreCheckout() {
   const isValid = useMemo(() => emailOk && phoneOk, [emailOk, phoneOk])
 
   useEffect(() => {
+    let active = true
+
     ;(async () => {
       try {
-        const ofResp = await fetch('/api/checkout/pub/orderForm', {
-          method: 'GET',
-        })
-        const orderForm = await ofResp.json()
+        const orderForm = await fetchJsonWithRetry(
+          '/api/checkout/pub/orderForm',
+          { method: 'GET' },
+          1,
+          300
+        )
+
         const existingEmail = orderForm?.clientProfileData?.email
 
         if (existingEmail) {
-          window.location.href = CHECKOUT_URL
+          window.location.assign(CHECKOUT_URL)
           return
         }
       } catch {
-        // se falhar, não bloqueia
+        // se falhar, não bloqueia a página
       } finally {
-        setCheckingSession(false)
+        if (active) setCheckingSession(false)
       }
     })()
+
+    return () => {
+      active = false
+    }
   }, [])
 
   function handlePhoneChange(value: string) {
@@ -207,7 +263,6 @@ export default function PreCheckout() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
 
-    // se tentar enviar, marca como "touched" pra aparecer mensagem
     if (!emailTouched) setEmailTouched(true)
     if (!phoneTouched) setPhoneTouched(true)
 
@@ -218,58 +273,63 @@ export default function PreCheckout() {
 
     try {
       // 1) pega orderForm
-      const ofResp = await fetch('/api/checkout/pub/orderForm', {
-        method: 'GET',
-      })
-      const orderForm = await ofResp.json()
+      const orderForm = await fetchJsonWithRetry(
+        '/api/checkout/pub/orderForm',
+        { method: 'GET' },
+        2,
+        400
+      )
+
       const orderFormId = orderForm?.orderFormId
 
-      // 2) salva no MD via endpoint Node (telefone normalizado)
-      const saveResp = await fetch('/_v/precheckout/client', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: email.trim(),
-          homePhone: phoneDigits,
-          orderFormId,
-        }),
-      })
+      if (!orderFormId) {
+        throw new Error('Não foi possível identificar o carrinho')
+      }
 
-      const saveBody = await saveResp.json().catch(() => ({}))
+      // 2) salva no seu serviço customizado
+      const saveBody = await fetchJsonWithRetry(
+        '/_v/precheckout/client',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim(),
+            homePhone: phoneDigits,
+            orderFormId,
+          }),
+        },
+        2,
+        700
+      )
 
-      if (!saveResp.ok || saveBody?.ok === false) {
+      if (saveBody?.ok === false) {
         throw new Error(
           saveBody?.error || saveBody?.message || 'Falha ao salvar seus dados'
         )
       }
 
-      // 3) seta no checkout (clientProfileData)
-      if (orderFormId) {
-        const attachResp = await fetch(
-          `/api/checkout/pub/orderForm/${orderFormId}/attachments/clientProfileData`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: email.trim(),
-              phone: phoneDigits,
-            }),
-          }
-        )
+      // 3) seta no checkout
+      await fetchJsonWithRetry(
+        `/api/checkout/pub/orderForm/${orderFormId}/attachments/clientProfileData`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim(),
+            phone: phoneDigits,
+          }),
+        },
+        2,
+        500
+      )
 
-        if (!attachResp.ok) {
-          const attachBody = await attachResp.json().catch(() => ({}))
-          throw new Error(
-            attachBody?.message ||
-              attachBody?.error ||
-              'Falha ao preparar o checkout'
-          )
-        }
-      }
-
-      window.location.href = CHECKOUT_URL
+      window.location.assign(CHECKOUT_URL)
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erro inesperado'
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Erro inesperado ao continuar para o checkout'
+
       setError(message)
     } finally {
       setLoading(false)
@@ -281,9 +341,9 @@ export default function PreCheckout() {
       <div style={styles.page}>
         <div style={styles.card}>
           <div style={styles.headerRow}>
-            <h1 style={styles.title}>Para continuar, informe seu dados</h1>
+            <div style={styles.step}>1</div>
+            <h1 style={styles.title}>Email</h1>
           </div>
-
           <p style={styles.subtitle}>Rápido. Fácil. Seguro.</p>
           <div style={styles.loading}>Verificando seu carrinho…</div>
         </div>
@@ -295,7 +355,8 @@ export default function PreCheckout() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.headerRow}>
-          <h1 style={styles.title}>Para continuar, informe seu dados</h1>
+          <div style={styles.step}>1</div>
+          <h1 style={styles.title}>Email</h1>
         </div>
 
         <p style={styles.subtitle}>Rápido. Fácil. Seguro.</p>
@@ -337,23 +398,20 @@ export default function PreCheckout() {
 
           <div style={styles.infoBox}>
             <div style={styles.infoTitle}>
-              Usamos seus dados de forma 100% segura para:
+              Usamos seu e-mail de forma 100% segura para:
             </div>
             <ul style={styles.list}>
               <li style={styles.li}>
                 <span style={styles.check}>✓</span> Identificar seu perfil
               </li>
               <li style={styles.li}>
-                <span style={styles.check}>✓</span> Notificar sobre o andamento
-                do seu pedido
+                <span style={styles.check}>✓</span> Notificar sobre o andamento do seu pedido
               </li>
               <li style={styles.li}>
-                <span style={styles.check}>✓</span> Gerenciar seu histórico de
-                compras
+                <span style={styles.check}>✓</span> Gerenciar seu histórico de compras
               </li>
               <li style={styles.li}>
-                <span style={styles.check}>✓</span> Acelerar o preenchimento das
-                suas informações
+                <span style={styles.check}>✓</span> Acelerar o preenchimento de suas informações
               </li>
             </ul>
           </div>
@@ -369,7 +427,7 @@ export default function PreCheckout() {
               cursor: !isValid || loading ? 'not-allowed' : 'pointer',
             }}
           >
-            {loading ? 'CONTINUANDO...' : 'CONTINUAR'}
+            {loading ? 'VERIFICANDO...' : 'CONTINUAR'}
           </button>
         </form>
       </div>
